@@ -26,6 +26,12 @@ export interface RunRecord {
   responseHeaders?: Record<string, string> | null;
   responseData?: unknown;
   createdAt: number;
+  // request context (optional, not indexed)
+  requestMethod?: string;
+  requestPath?: string;
+  requestUrl?: string;
+  requestHeadersJson?: string;
+  requestBodyText?: string;
 }
 
 export interface NotebookRecord {

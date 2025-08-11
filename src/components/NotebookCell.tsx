@@ -8,6 +8,7 @@ import Textarea from "./ui/Textarea";
 import Label from "./ui/Label";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import Modal from "./ui/Modal";
 
 type Props = {
   cell: Cell;
@@ -16,14 +17,29 @@ type Props = {
   onChange: (updated: Cell) => void;
   onRunSaved?: (run: RunRecord) => void;
   onDelete?: (id: number) => void;
+  selected?: boolean;
+  onToggleSelect?: (cellId: number, checked: boolean) => void;
 };
 
-export function NotebookCell({ cell, baseUrl, useProxy = true, onChange, onRunSaved, onDelete }: Props) {
+export function NotebookCell({ cell, baseUrl, useProxy = true, onChange, onRunSaved, onDelete, selected = false, onToggleSelect }: Props) {
   const [isRunning, setIsRunning] = useState(false);
   const isRequest = cell.type === "request";
   const [lastRun, setLastRun] = useState<RunRecord | null>(null);
   const [notes, setNotes] = useState<string>(cell.markdown || "");
   const [isEditingNotes, setIsEditingNotes] = useState<boolean>(false);
+  const [expandedJson, setExpandedJson] = useState<boolean>(false);
+  const [showHeaders, setShowHeaders] = useState<boolean>(false);
+  const [showBody, setShowBody] = useState<boolean>(false);
+  const endpointHints = useMemo(() => {
+    if (typeof window === "undefined") return [] as string[];
+    try {
+      const raw = window.localStorage.getItem("opptrack_endpoints");
+      if (!raw) return [];
+      return JSON.parse(raw) as string[];
+    } catch {
+      return [];
+    }
+  }, []);
 
   const headerPlaceholder = useMemo(
     () => `{"Authorization": "Bearer <token>"}`,
@@ -84,6 +100,11 @@ export function NotebookCell({ cell, baseUrl, useProxy = true, onChange, onRunSa
         responseHeaders: Object.fromEntries(response.headers.entries()),
         responseData: payload?.data ?? payload?.error ?? payload,
         createdAt: Date.now(),
+        requestMethod: cell.method,
+        requestPath: cell.path,
+        requestUrl: (useProxy ? undefined : (isAbsolute ? (cell.path as string) : `${baseUrl.replace(/\/$/, "")}${cell.path?.startsWith("/") ? cell.path : `/${cell.path}`}`)),
+        requestHeadersJson: cell.headersJson,
+        requestBodyText: cell.bodyText,
       };
       const id = await db.runs.add(run);
       const withId = { ...run, id } as RunRecord;
@@ -149,11 +170,23 @@ export function NotebookCell({ cell, baseUrl, useProxy = true, onChange, onRunSa
               </div>
             </div>
           )}
-          {cell.id !== undefined && (
+          <div className="flex items-center gap-2">
+            {cell.id !== undefined && isRequest && (
+              <label className="flex items-center gap-1 text-xs" title="Select for compare">
+                <input
+                  type="checkbox"
+                  checked={selected}
+                  onChange={(e) => cell.id && onToggleSelect?.(cell.id, e.target.checked)}
+                />
+                Select
+              </label>
+            )}
+            {cell.id !== undefined && (
             <Button variant="destructive" size="sm" onClick={() => cell.id && onDelete?.(cell.id)}>
               Delete
             </Button>
-          )}
+            )}
+          </div>
         </div>
       </CardHeader>
 
@@ -176,33 +209,59 @@ export function NotebookCell({ cell, baseUrl, useProxy = true, onChange, onRunSa
             </div>
             <div className="md:col-span-3">
               <Label htmlFor={`path-${cell.id}`}>Path</Label>
-              <Input
-                id={`path-${cell.id}`}
-                placeholder="/health or https://api.example.com/health"
-                value={cell.path || ""}
-                onChange={(e) => onChange({ ...cell, path: e.target.value, updatedAt: Date.now() })}
-              />
+              <div className="relative">
+                <Input
+                  id={`path-${cell.id}`}
+                  placeholder="/health or https://api.example.com/health"
+                  value={cell.path || ""}
+                  onChange={(e) => onChange({ ...cell, path: e.target.value, updatedAt: Date.now() })}
+                  list={`endpoint-hints-${cell.id}`}
+                />
+                <datalist id={`endpoint-hints-${cell.id}`}>
+                  {endpointHints.map((h) => (
+                    <option key={h} value={h.split(" ")[1] || h} />
+                  ))}
+                </datalist>
+              </div>
             </div>
-            <div className="md:col-span-2">
-              <Label htmlFor={`headers-${cell.id}`}>Headers (JSON)</Label>
-              <Textarea
-                id={`headers-${cell.id}`}
-                className="font-mono"
-                placeholder={headerPlaceholder}
-                value={cell.headersJson || ""}
-                onChange={(e) => onChange({ ...cell, headersJson: e.target.value, updatedAt: Date.now() })}
-              />
-            </div>
-            <div className="md:col-span-2">
-              <Label htmlFor={`body-${cell.id}`}>Body</Label>
-              <Textarea
-                id={`body-${cell.id}`}
-                className="font-mono"
-                placeholder="Body (raw or JSON)"
-                value={cell.bodyText || ""}
-                onChange={(e) => onChange({ ...cell, bodyText: e.target.value, updatedAt: Date.now() })}
-              />
-            </div>
+            {!showBody ? (
+              <div className="md:col-span-2 self-end">
+                <Button variant="outline" size="sm" onClick={() => setShowBody(true)}>Show body</Button>
+              </div>
+            ) : (
+              <div className="md:col-span-2">
+                <Label htmlFor={`body-${cell.id}`}>Body</Label>
+                <Textarea
+                  id={`body-${cell.id}`}
+                  className="font-mono min-h-[60px]"
+                  placeholder="Body (raw or JSON)"
+                  value={cell.bodyText || ""}
+                  onChange={(e) => onChange({ ...cell, bodyText: e.target.value, updatedAt: Date.now() })}
+                />
+                <div className="mt-1">
+                  <Button variant="outline" size="sm" onClick={() => setShowBody(false)}>Hide body</Button>
+                </div>
+              </div>
+            )}
+            {!showHeaders ? (
+              <div className="md:col-span-2 self-end">
+                <Button variant="outline" size="sm" onClick={() => setShowHeaders(true)}>Show headers</Button>
+              </div>
+            ) : (
+              <div className="md:col-span-2">
+                <Label htmlFor={`headers-${cell.id}`}>Headers (JSON)</Label>
+                <Textarea
+                  id={`headers-${cell.id}`}
+                  className="font-mono min-h-[60px]"
+                  placeholder={headerPlaceholder}
+                  value={cell.headersJson || ""}
+                  onChange={(e) => onChange({ ...cell, headersJson: e.target.value, updatedAt: Date.now() })}
+                />
+                <div className="mt-1">
+                  <Button variant="outline" size="sm" onClick={() => setShowHeaders(false)}>Hide headers</Button>
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <div>
@@ -228,7 +287,7 @@ export function NotebookCell({ cell, baseUrl, useProxy = true, onChange, onRunSa
 
       {isRequest && (
         <CardFooter>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <Button onClick={runRequest} disabled={isRunning}>
               {isRunning ? "Running..." : "Run"}
             </Button>
@@ -243,7 +302,7 @@ export function NotebookCell({ cell, baseUrl, useProxy = true, onChange, onRunSa
         <CardContent>
           <div className="text-sm" style={{ color: "var(--text-primary)" }}>Last run</div>
           {lastRun ? (
-            <div className="rounded p-2" style={{ background: "var(--bg-surface)", border: "1px solid var(--border-color)" }}>
+            <div className="rounded p-2" style={{ background: "var(--bg-surface)", border: "1px solid var(--border-color)", maxHeight: "220px", overflow: "auto" }}>
               <div className="text-xs mb-1" style={{ color: "var(--text-primary)" }}>
                 Status: {lastRun.status} • {new Date(lastRun.createdAt).toLocaleString()}
               </div>
@@ -261,6 +320,7 @@ export function NotebookCell({ cell, baseUrl, useProxy = true, onChange, onRunSa
                 >
                   Copy JSON
                 </Button>
+                <Button variant="outline" size="sm" onClick={() => setExpandedJson(true)}>Open</Button>
               </div>
             </div>
           ) : (
@@ -268,6 +328,11 @@ export function NotebookCell({ cell, baseUrl, useProxy = true, onChange, onRunSa
           )}
         </CardContent>
       )}
+      <Modal open={expandedJson} onClose={() => setExpandedJson(false)} title="Last run">
+        <pre className="text-xs whitespace-pre-wrap break-all" style={{ color: "var(--text-primary)" }}>
+{formatResponse(lastRun?.responseData)}
+        </pre>
+      </Modal>
     </Card>
   );
 }

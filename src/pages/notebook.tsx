@@ -122,6 +122,8 @@ export default function NotebookPage() {
     return saved == null ? true : saved === "true";
   });
   const [presets, setPresets] = useState<PresetRecord[]>([]);
+  const [selectedForCompare, setSelectedForCompare] = useState<number[]>([]);
+  const [compareOpen, setCompareOpen] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -241,17 +243,27 @@ export default function NotebookPage() {
       </button>
 
       {/* Main content (shifted when sidebar open on md+) */}
-      <div className={`min-h-screen p-6 space-y-4 transition-all md:pl-80 ${sidebarOpen ? "md:pl-80" : "md:pl-6"}`}>
+      <div className={`min-h-screen px-6 py-6 space-y-4 transition-[padding] ${sidebarOpen ? "md:pl-[19rem]" : "md:pl-10"}`} onDragOver={(e) => e.preventDefault()}>
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
                 <Button className="md:hidden" variant="outline" onClick={() => setSidebarOpen(true)}>Menu</Button>
-              <h1 className="text-xl font-semibold">Notebook</h1>
-              <Link className="text-blue-600 underline" href="/endpoints">
-                Endpoint Explorer
+              <h1 className="text-xl font-semibold">{notebooks.find(n => n.id === activeNotebookId)?.name || "Notebook"}</h1>
+              <Link
+                href="/endpoints"
+                title="Open Endpoint Explorer"
+                className="inline-flex items-center h-8 px-3 rounded-md border text-sm"
+                style={{ borderColor: "var(--border-color)", background: "var(--bg-surface)", color: "var(--text-primary)" }}
+              >
+                Endpoints
               </Link>
-              <Link className="text-blue-600 underline" href="/">
+              <Link
+                href="/"
+                title="Back to Home"
+                className="inline-flex items-center h-8 px-3 rounded-md border text-sm"
+                style={{ borderColor: "var(--border-color)", background: "var(--bg-surface)", color: "var(--text-primary)" }}
+              >
                 Home
               </Link>
             </div>
@@ -262,24 +274,43 @@ export default function NotebookPage() {
                 onChange={(e) => setBaseUrl(e.target.value)}
                 className="w-[380px]"
               />
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={useProxy}
-                  onChange={(e) => setUseProxy(e.target.checked)}
-                />
-                Use proxy
-              </label>
+              <div className="flex items-center gap-2">
+                <span className="text-sm">Proxy</span>
+                {/* Accessible switch */}
+                <label className="inline-flex items-center gap-2 select-none cursor-pointer">
+                  <input type="checkbox" className="sr-only" checked={useProxy} onChange={(e) => setUseProxy(e.target.checked)} />
+                  <span className="relative inline-flex h-6 w-11 flex-shrink-0 rounded-full border transition-colors" style={{ borderColor: "var(--border-color)", background: useProxy ? "var(--color-primary)" : "var(--color-secondary)" }}>
+                    <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition ${useProxy ? 'translate-x-5' : 'translate-x-0'}`} style={{ margin: 2 }} />
+                  </span>
+                </label>
+              </div>
+              <Button size="sm" className="whitespace-nowrap" variant="destructive" onClick={async () => {
+                if (!activeNotebookId) return;
+                if (!confirm('Delete this notebook? This will remove all its cells.')) return;
+                await db.cells.where('notebookId').equals(activeNotebookId).delete();
+                await db.notebooks.delete(activeNotebookId);
+                const list = await db.notebooks.orderBy('updatedAt').reverse().toArray();
+                setNotebooks(list);
+                setActiveNotebookId(list[0]?.id ?? null);
+              }}>Delete</Button>
             </div>
           </div>
         </CardHeader>
         <CardContent>
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
             <Button variant="outline" onClick={addRequestCell}>
               + Request Cell
             </Button>
             <Button variant="outline" onClick={addMarkdownCell}>
               + Markdown Cell
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={selectedForCompare.length < 2}
+              onClick={() => setCompareOpen(true)}
+              title={selectedForCompare.length < 2 ? "Select at least 2 request cells" : "Open compare view"}
+            >
+              Compare selected ({selectedForCompare.length})
             </Button>
           </div>
         </CardContent>
@@ -303,6 +334,14 @@ export default function NotebookPage() {
                 useProxy={useProxy}
                 onChange={updateCell}
                 onDelete={deleteCell}
+                selected={selectedForCompare.includes(cell.id!)}
+                onToggleSelect={(id, checked) => {
+                  setSelectedForCompare((prev) => {
+                    const set = new Set(prev);
+                    if (checked) set.add(id); else set.delete(id);
+                    return Array.from(set);
+                  });
+                }}
               />
             </div>
           ))}
@@ -312,7 +351,77 @@ export default function NotebookPage() {
         </div>
       )}
       </div>
+      {compareOpen && (
+        <CompareModal
+          onClose={() => setCompareOpen(false)}
+          cellIds={selectedForCompare}
+        />
+      )}
     </div>
   );
 }
+
+import Modal from "../components/ui/Modal";
+import { useLiveQuery } from "dexie-react-hooks";
+import React from "react";
+
+function CompareModal({ cellIds, onClose }: { cellIds: number[]; onClose: () => void }) {
+  const runs = useLiveQuery(async () => {
+    const out: { cellId: number; title: string; run: any }[] = [];
+    for (const id of cellIds) {
+      const cell = await db.cells.get(id);
+      if (!cell) continue;
+      const run = await db.runs.where("cellId").equals(id).last();
+      out.push({ cellId: id, title: cell.title || `${cell.method} ${cell.path}`, run });
+    }
+    return out;
+  }, [cellIds]);
+
+  // no diff baseline; show raw colorized JSON side by side
+
+  return (
+    <Modal open fullscreen onClose={onClose} title={`Compare (${cellIds.length})`}>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 h-[calc(100vh-120px)] overflow-auto">
+        {(runs || []).map((r) => (
+          <div key={r.cellId} className="rounded border p-2 flex flex-col" style={{ borderColor: "var(--border-color)" }}>
+            <div className="text-sm font-medium mb-1">{r.title}</div>
+            <div className="text-xs mb-2">Status: {r.run?.status ?? "-"}</div>
+            <div className="mb-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const toCopy = typeof r.run?.responseData === 'string' ? r.run?.responseData : JSON.stringify(r.run?.responseData, null, 2);
+                  navigator.clipboard?.writeText(toCopy || '');
+                }}
+              >
+                Copy JSON
+              </Button>
+            </div>
+            <div className="flex-1 overflow-auto" style={{ overflowX: 'auto' }}>
+              <pre className="text-xs whitespace-pre" style={{ minWidth: 600 }} dangerouslySetInnerHTML={{ __html: syntaxColorize(formatJson(r.run?.responseData)) }} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </Modal>
+  );
+}
+
+function formatJson(data: unknown): string {
+  try { return JSON.stringify(data, null, 2); } catch { return String(data); }
+}
+
+function syntaxColorize(json: string): string {
+  // escape HTML
+  const esc = json.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] as string));
+  return esc
+    .replace(/("(\\.|[^"\\])*")\s*:/g, '<span class="json-key">$1</span>:') // keys
+    .replace(/(:\s*)"(\\.|[^"\\])*"/g, '$1<span class="json-string">$&</span>') // string values
+    .replace(/(:\s*)(-?\d+(?:\.\d+)?)/g, '$1<span class="json-number">$2</span>') // numbers
+    .replace(/(:\s*)(true|false)/g, '$1<span class="json-boolean">$2</span>') // booleans
+    .replace(/(:\s*)null/g, '$1<span class="json-null">null</span>'); // null
+}
+
+// no diff function; keeping only syntaxColorize
 

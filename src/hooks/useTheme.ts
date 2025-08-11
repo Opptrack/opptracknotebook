@@ -6,7 +6,13 @@ const THEME_LOCAL_STORAGE_KEY = "opptrack_theme";
 export type ThemeLevel = keyof typeof themes;
 
 export function useTheme() {
-  const [themeName, setThemeName] = useState<ThemeLevel>("intermediate");
+  const [themeName, setThemeName] = useState<ThemeLevel>(() => {
+    if (typeof window !== "undefined") {
+      const saved = window.localStorage.getItem(THEME_LOCAL_STORAGE_KEY) as ThemeLevel | null;
+      if (saved && themes[saved]) return saved;
+    }
+    return "intermediate";
+  });
   const theme = themes[themeName];
 
   useEffect(() => {

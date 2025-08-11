@@ -275,3 +275,12 @@ iframe {
   pointer-events: auto !important;
   z-index: 50 !important;
 }
+
+/* Lightweight JSON syntax highlighting */
+.json-key { color: #7c3aed; }
+.json-string { color: #047857; }
+.json-number { color: #1d4ed8; }
+.json-boolean { color: #b91c1c; }
+.json-null { color: #6b7280; }
+.diff-add { background-color: rgba(16,185,129,0.12); }
+.diff-del { background-color: rgba(239,68,68,0.12); }

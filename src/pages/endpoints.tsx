@@ -74,6 +74,18 @@ export default function EndpointsPage() {
     return out.sort((a, b) => a.path.localeCompare(b.path));
   }, [spec]);
 
+  // Persist operations for notebook autocomplete
+  useEffect(() => {
+    if (operations.length && typeof window !== "undefined") {
+      try {
+        window.localStorage.setItem(
+          "opptrack_endpoints",
+          JSON.stringify(operations.map((o) => `${o.method} ${o.path}`))
+        );
+      } catch {}
+    }
+  }, [operations]);
+
   const currentOp = useMemo(() => {
     if (!spec || !selectedPath || !selectedMethod) return null as any;
     const m = (spec.paths?.[selectedPath] || {})[selectedMethod.toLowerCase()];
